@@ -1,0 +1,1396 @@
+# === Importation des modules nécessaires ===
+
+# Gestion et manipulation de données
+import pandas as pd                        # Lecture et manipulation de fichiers Excel
+from collections import defaultdict        # Dictionnaires avec valeurs par défaut
+
+# Calculs et fonctions mathématiques
+from math import (
+    radians, sin, cos, sqrt, asin,
+    log, pi, atan, hypot, log10
+)
+
+# Visualisation cartographique
+import folium                               # Génération de cartes interactives
+from folium.plugins import HeatMap, MarkerCluster  # Plugins pour cartes avancées (cluster, heatmap)
+
+# Outils de progression, temps et interface utilisateur
+from tqdm.notebook import tqdm              # Barre de progression dans Jupyter Notebook
+import time                                 # Mesure du temps d’exécution
+from datetime import time as dt_time        # Gestion d’objets "time"
+from IPython.display import clear_output    # Nettoyage de la sortie notebook
+
+# Système et fichiers
+import os                                   # Gestion de fichiers et dossiers
+import webbrowser                           # Ouverture automatique dans le navigateur
+
+# Analyse numérique
+from numpy import linspace                  # Génération de séries numériques
+
+# Sélection efficace
+from heapq import nlargest                  # Sélection des N plus grands éléments
+
+import os
+
+os.chdir(os.path.dirname(__file__))  # change le répertoire courant vers celui du script, de nombreux logiciels de programmation n'utilisent pas le dossier où se trouve le fichier comme référetiel d'accès aux fichiers utilisés, permet de changer cela
+
+# === Variables globales ===
+n = 0  # Compteur de tentatives (utile pour nommer les cartes générées)
+
+# ===================================Définition des fonctions à appeler plus tard dans le programme=================================================
+
+# ===================================Fonctions d'initialisation des données=================================================
+def Initialisation(Dictionnaire_parcours):
+    """
+    Initialise la configuration de la carte à produire selon les choix opérés par l'utilisateur.
+    Cette fonction gère :
+      - le choix de la zone et de l'année d'étude,
+      - le chargement des fichiers associés (communes, flux, pharmacies, temps-distance),
+      - les options d'affichage (groupement de pharmacies, flux, top 10...).
+    Elle retourne un dictionnaire de configuration utilisé pour la suite du programme.
+    """
+
+    # Variables de réponse utilisateur
+    reponse_1 = ""
+    reponse_2 = ""
+
+    # Colonnes à lire dans les différents fichiers Excel
+    COLONNES_COMMUNES = 'A:C,F,H,J:N'
+    COLONNES_FLUX = 'A:I'
+    COLONNES_DISTANCE_TEMPS = 'B,F,J:L'
+
+    # === Étape 1 : Choix de la zone et de l’année d’étude ===
+    print("## ZONE D'ETUDE ##\nQuel carte souhaitez-vous étudier ?")
+    reponse_1 = demander_choix(
+        " 0 - Importer des données \n 1 - Drôme-Ardèche 2016 \n 2 - Drôme-Ardèche 2024\n 3 - Rhône 2016 \n 4 - Rhône 2024",
+        ["0", "1", "2", "3", "4"]
+    )
+
+    # === Étape 2 : Si l’utilisateur souhaite importer ses propres données ===
+    if reponse_1 == "0":
+        r = ""
+        while r != "OK":
+            Config = Initialisation_donnees_perso(Dictionnaire_parcours, COLONNES_COMMUNES, COLONNES_FLUX, COLONNES_DISTANCE_TEMPS)
+            print(f"\nRécapitulatif import des données personnalisées : {Config}")
+            r = input('Entrez "OK" pour confirmer les données saisies : ')
+        return Config
+
+    # === Étape 3 : Cas spécifique du Rhône : choix Métropole / Département / Entier ===
+    elif reponse_1 in ["3", "4"]:
+        print("Souhaitez-vous étudier la partie métropolitaine, départementale du Rhône, ou bien les deux ?")
+        reponse_2 = demander_choix(" 0 - Entièreté \n 1 - Métropole \n 2 - Département", ["0", "1", "2"])
+
+    # === Étape 4 : Sélection de la période et du parcours étudié, du paradigme considéré ===
+    PERIODE = periode()
+    PARCOURS = parcours(Dictionnaire_parcours)
+    PARADIGME = paradigme()
+
+    # === Étape 5 : Paramétrage automatique selon la zone choisie ===
+    # Cas 1 - Drôme Ardèche
+    if reponse_1 in ["1", "2"]:
+        FICHIER_COMMUNES_ZONE = "Communes Drôme Ardèche.xlsx"
+        LIGNES_COMMUNES = 776
+        LOCALISATION = [44.8743, 4.9477]  # Coordonnées centrées sur la zone d'étude
+        LISTE_SECTEURS = [
+            "Saint-Agrève", "Annonay", "Saint-Vallier", "Romans-sur-Isère", "Saint-Marcellin",
+            "Tournon-sur-Rhône", "Le Cheylard", "Lamastre", "Valence", "Crest", "Langogne", "Aubenas",
+            "Privas", "La Voulte-sur-Rhône", "Les Vans", "Montélimar", "Dieulefit", "Bollène",
+            "Valréas", "Sault", "Vaison-la-Romaine"
+        ]
+        ZOOM = 8
+        FICHIER_PHARMACIE_DEPARTEMENT = "Pharmacies 07-26 et 69.xlsx"
+        LIGNES_PHARMACIE_DEPARTEMENT = 320
+        FEUILLE_PHARMACIE_DEPARTEMENT = "phie 07-26"
+
+        # Choix de l'année correspondante
+        if reponse_1 == "1":
+            FEUILLE_ETUDIEE = "07-26 2016"
+            LIGNES_FLUX = 21024
+        else:
+            FEUILLE_ETUDIEE = "07-26 2024"
+            LIGNES_FLUX = 28990
+
+    # Cas 2 - Rhône
+    else:
+        FICHIER_COMMUNES_ZONE = "Communes Rhône.xlsx"
+        LIGNES_COMMUNES = 263
+        LOCALISATION = [45.75491628289306, 4.836342457897233]  # Coordonnées centrées sur Lyon
+        LISTE_SECTEURS = [
+            "Amplepuis", "Belleville-en-Beaujolais", "Tarare", "Anse", "Villefranche-sur-Saône",
+            "L'Arbresle", "Dardilly", "Fontaines-sur-Saône", "Caluire-et-Cuire", "Francheville",
+            "Vaulx-en-Velin", "Écully", "Villeurbanne", "Tassin-la-Demi-Lune", "Décines-Charpieu",
+            "Saint-Symphorien-sur-Coise", "Brignais", "Oullins-Pierre-Bénite", "Vénissieux",
+            "Saint-Priest", "Givors", "Vienne", "Lyon 1er", "Lyon 2e", "Lyon 3e", "Lyon 4e",
+            "Lyon 5e", "Lyon 6e", "Lyon 7e", "Lyon 8e", "Lyon 9e"
+        ]
+        ZOOM = 9
+        FICHIER_PHARMACIE_DEPARTEMENT = "Pharmacies 07-26 et 69.xlsx"
+        LIGNES_PHARMACIE_DEPARTEMENT = 622
+        FEUILLE_PHARMACIE_DEPARTEMENT = "phie 69"
+
+        if reponse_1 == "3":
+            FEUILLE_ETUDIEE = "69 2016"
+            LIGNES_FLUX = 35145
+        else:
+            FEUILLE_ETUDIEE = "69 2024"
+            LIGNES_FLUX = 53453
+
+    # === Étape 6 : Zone spécifique Rhône ===
+    if reponse_2 == "1":
+        ZONE_69 = "69M"  # Métropole
+    elif reponse_2 == "2":
+        ZONE_69 = "69D"  # Département
+    else:
+        ZONE_69 = "Entier"  # Ensemble de la zone Rhône
+
+    # === Étape 7 : Modélisation et affichage ===
+    FICHIER_FLUX = "Extraction flux patients.xlsx"
+
+    MODEL_PHIE = demander_choix(
+        "Souhaitez-vous afficher les pharmacies une à une ou groupées ?\n 0 - Non groupées\n 1 - Groupées",
+        ["0", "1"]
+    )
+
+    MODEL_FLUX = demander_choix(
+        "Souhaitez-vous visualiser les flux des patients groupés par secteurs ?\n 0 - Non groupés\n 1 - Groupés",
+        ["0", "1"]
+    )
+
+    # === Étape 8 : Récapitulatif des choix opérés ===
+    print(f"\nRécapitulatif : \nZone et année d'étude : {FEUILLE_ETUDIEE}, période : {PERIODE}, parcours : {PARCOURS} ")
+
+    # === Étape 9 : Retour d’un dictionnaire de configuration pour la suite du programme ===
+    return {
+        "fichier_flux": FICHIER_FLUX,
+        "fichier_communes_zone": FICHIER_COMMUNES_ZONE,
+        "lignes_communes": int(LIGNES_COMMUNES),
+        "localisation": LOCALISATION,
+        "liste_secteurs": LISTE_SECTEURS,
+        "zoom": ZOOM,
+        "feuille_étudiée": FEUILLE_ETUDIEE,
+        "lignes_flux": int(LIGNES_FLUX),
+        "zone_69": ZONE_69 if reponse_1 in ["3", "4"] else None,
+        "période": PERIODE,
+        "parcours": PARCOURS,
+        "colonnes_communes": COLONNES_COMMUNES,
+        "colonnes_flux": COLONNES_FLUX,
+        "fichier_distance_temps": "Distance-temps trajets patients.xlsx",
+        "colonnes_distance_temps": COLONNES_DISTANCE_TEMPS,
+        "lignes_distance_temps": 86597,
+        "fichier_phi_dep": FICHIER_PHARMACIE_DEPARTEMENT,
+        "lignes_phie_dep": LIGNES_PHARMACIE_DEPARTEMENT,
+        "feuille_phie_dep": FEUILLE_PHARMACIE_DEPARTEMENT,
+        "modélisation_pharmacie": {"0": "Non Groupé", "1": "Groupé"}[MODEL_PHIE],
+        "modélisation_flux": {"0": "Non Groupé", "1": "Groupé"}[MODEL_FLUX],
+        "paradigme":{"0": "officine", "1": "patient"}[PARADIGME],
+    }
+
+
+def Initialisation_donnees_perso(Dictionnaire_parcours, col_com, col_flux, col_d_t):
+    """
+    Initialise la configuration lorsque l'utilisateur importe ses propres fichiers Excel.
+    Les données saisies ici remplaceront celles prédéfinies pour les zones d'étude classiques.
+    """
+    print("Entrez les éléments suivants nécessaires à la réalisation de la carte :")
+
+    Choix = None
+    (FICHIER_COMMUNES_ZONE, LIGNES_COMMUNES, FICHIER_FLUX, FEUILLE_ETUDIEE, LIGNES_FLUX,
+     PERIODE, PARCOURS, FICHIER_DISTANCE_TEMPS, LIGNES_DISTANCE_TEMPS,
+     FICHIER_PHARMACIE_DEPARTEMENT, LIGNES_PHARMACIE_DEPARTEMENT,
+     FEUILLE_PHARMACIE_DEPARTEMENT, MODEL_PHIE, MODEL_FLUX, PARADIGME) = choix_config(Choix, Dictionnaire_parcours)
+
+    # Coordonnées centrées sur la France (par défaut si zone inconnue)
+    LOCALISATION = [47.2608333, 2.4188888888888886]
+
+    return {
+        "fichier_communes_zone": FICHIER_COMMUNES_ZONE,
+        "lignes_communes": int(LIGNES_COMMUNES),
+        "fichier_flux": FICHIER_FLUX,
+        "feuille_étudiée": FEUILLE_ETUDIEE,
+        "lignes_flux": int(LIGNES_FLUX),
+        "localisation": LOCALISATION,
+        "liste_secteurs": None,
+        "période": PERIODE,
+        "parcours": PARCOURS,
+        "zone_69": None,
+        "zoom": 6,
+        "colonnes_communes": col_com,
+        "colonnes_flux": col_flux,
+        "fichier_distance_temps": FICHIER_DISTANCE_TEMPS,
+        "colonnes_distance_temps": col_d_t,
+        "lignes_distance_temps": LIGNES_DISTANCE_TEMPS,
+        "fichier_phi_dep": FICHIER_PHARMACIE_DEPARTEMENT,
+        "lignes_phie_dep": LIGNES_PHARMACIE_DEPARTEMENT,
+        "feuille_phie_dep": FEUILLE_PHARMACIE_DEPARTEMENT,
+        "modélisation_pharmacie": {"0": "Non Groupé", "1": "Groupé"}[MODEL_PHIE],
+        "modélisation_flux": {"0": "Non Groupé", "1": "Groupé"}[MODEL_FLUX],
+        "paradigme":{"0": "officine", "1": "patient"}[PARADIGME],
+    }
+
+
+# ================== Fonctions d'import d'informations saisies manuellement ==================
+def fichier_communes_zone():
+    return input("Nom du fichier Excel au format [nom].xlsx des communes de votre zone d'étude :")
+
+def lignes_communes():
+    return int(input("Le nombre total de lignes dans votre fichier commune : "))
+
+def fichier_flux():
+    return input("Nom du fichier Excel au format [nom].xlsx contenant les flux : ")
+
+def feuille_etudiee():
+    return input("Nom de la feuille à utiliser dans ce fichier : ")
+
+def lignes_flux():
+    return int(input("Nombre de lignes total du fichier flux : "))
+
+def fichier_distance_temps():
+    return input("Nom du fichier Excel au format [nom].xlsx des distances et temps de trajets inter-communaux : ")
+
+def lignes_distance_temps():
+    return int(input("Le nombre total de lignes dans votre fichier distance et temps de trajets : "))
+
+def fichier_pharmacie_departement():
+    return input("Nom du fichier Excel au format [nom].xlsx des pharmacies de la zone d'étude: ")
+
+def lignes_pharmacies_departement():
+    return int(input("Le nombre total de lignes dans votre fichier pharmacie : "))
+
+def feuille_pharmacie_departement():
+    return input("Nom de la feuille à lire dans le fichier des pharmacies :")
+
+def model_phie():
+    return demander_choix(
+        "Souhaitez-vous afficher les pharmacies une à une ou groupées ?\n 0 - Non groupées\n 1 - Groupées",
+        ["0", "1"]
+    )
+
+def paradigme():
+    print("\033[3m\nUn paradigme officine permet de voir d'où viennent les patients qui se rendent dans l'officine d'un secteur (=drainage), un paradigme patient permet de voir où se rendent les patient d'un secteur donné (=fuite).\n\033[0m")
+    return demander_choix(
+        "Souhaitez-vous étudier les parcours selon un paradigme centré officine ou centré patient ?\n 0 - Officine\n 1 - Patient",
+        ["0", "1"]
+    )
+
+def model_flux():
+    return demander_choix(
+        "Souhaitez-vous visualiser les flux des patients groupés par secteurs ?\n 0 - Non groupés\n 1 - Groupés",
+        ["0", "1"]
+    )
+
+    
+
+def choix_config(Choix, Dictionnaire_parcours):
+    """
+    Gère la configuration manuelle ou la modification ciblée d’un élément de configuration.
+    - Si aucun choix n’est fourni (Choix = None), toutes les informations sont demandées à l’opérateur.
+    - Si un choix est fourni, seule la valeur correspondante est mise à jour dans la configuration.
+    """
+    dictionnaire_choix = {
+        "0": fichier_flux,
+        "1": fichier_communes_zone,
+        "2": lignes_communes,
+        "6": feuille_etudiee,
+        "7": lignes_flux,
+        "9": periode,
+        "10": parcours,
+        "13": fichier_distance_temps,
+        "15": lignes_distance_temps,
+        "16": fichier_pharmacie_departement,
+        "17": lignes_pharmacies_departement,
+        "18": feuille_pharmacie_departement,
+        "19": model_phie,
+        "20": model_flux,
+        "21": paradigme,
+    }
+
+    # Mode complet — initialisation manuelle de tous les champs
+    if Choix is None:
+        FICHIER_COMMUNES_ZONE = fichier_communes_zone()
+        LIGNES_COMMUNES = lignes_communes()
+        FICHIER_FLUX = fichier_flux()
+        FEUILLE_ETUDIEE = feuille_etudiee()
+        LIGNES_FLUX = lignes_flux()
+        PERIODE = periode()
+        PARCOURS = parcours(Dictionnaire_parcours)
+        FICHIER_DISTANCE_TEMPS = fichier_distance_temps()
+        LIGNES_DISTANCE_TEMPS = lignes_distance_temps()
+        FICHIER_PHARMACIE_DEPARTEMENT = fichier_pharmacie_departement()
+        LIGNES_PHARMACIE_DEPARTEMENT = lignes_pharmacies_departement()
+        FEUILLE_PHARMACIE_DEPARTEMENT = feuille_pharmacie_departement()
+        MODEL_PHIE = model_phie()
+        MODEL_FLUX = model_flux()
+        PARADIGME = paradigme()
+
+        return (
+            FICHIER_COMMUNES_ZONE, LIGNES_COMMUNES, COLONNES_COMMUNES,
+            FICHIER_FLUX, FEUILLE_ETUDIEE, LIGNES_FLUX, COLONNES_FLUX,
+            LOCALISATION, PERIODE, PARCOURS, FICHIER_DISTANCE_TEMPS,
+            LIGNES_DISTANCE_TEMPS, COLONNES_DISTANCE_TEMPS,
+            FICHIER_PHARMACIE_DEPARTEMENT, LIGNES_PHARMACIE_DEPARTEMENT,
+            FEUILLE_PHARMACIE_DEPARTEMENT, MODEL_PHIE, MODEL_FLUX, PARADIGME
+        )
+
+    # Mode ciblé — modification d’un seul paramètre
+    else:
+        if Choix == "10":
+            Config[list(Config.keys())[int(Choix)]] = dictionnaire_choix[Choix](Dictionnaire_parcours)
+        else:
+            Config[list(Config.keys())[int(Choix)]] = dictionnaire_choix[Choix]()
+        return Config
+
+
+def demander_choix(question, options):
+    """
+    Affiche une question avec des choix possibles et renvoie la réponse valide sélectionnée par l'utilisateur.
+    Boucle tant qu'une valeur correcte n'est pas fournie.
+    """
+    reponse = ""
+    while reponse not in options:
+        print(question)
+        reponse = input("Entrez le numéro correspondant : ")
+    return reponse
+
+
+def filtre_ligne(row, config, choix_secteur, Dictionnaire_secteurs, Dictionnaire_parcours, Dico_com_sect):
+    """
+    Filtre les lignes issues du fichier flux en fonction :
+      - de la zone géographique sélectionnée (Rhône entier, Métropole ou Département),
+      - du secteur ciblé (ou tous),
+      - de la période (DJF, Nuit ou les deux),
+      - et du type de parcours patient sélectionné.
+
+    Retourne True si la ligne doit être conservée pour l'analyse, sinon False.
+    """
+    # Filtrage par zone (Rhône)
+    if config["zone_69"] and config["zone_69"] != "Entier" and row[0] != config["zone_69"]:
+        return False
+
+    # Filtrage selon le paradigme choisi
+    if Config["paradigme"] == "officine":
+        # Paradigme classique : centré officine
+        # On conserve les trajets qui arrivent dans le secteur cible
+        if choix_secteur != 0 and Dictionnaire_secteurs[choix_secteur] != str(row[1]):
+            return False
+
+    elif Config["paradigme"] == "patient":
+        # Autre paradigme : centré patient
+        # On conserve les trajets dont la commune de départ est dans le secteur cible, i.e. on regarde les patients qui en émanent
+        commune_patient = str(row[5])  # colonne du code commune patient
+        secteur_commune = Dico_com_sect.get(commune_patient)
+
+        # Si la commune n’a pas de correspondance ou ne fait pas partie du secteur cible
+        if choix_secteur != 0 and Dictionnaire_secteurs[choix_secteur] != secteur_commune:
+            return False
+
+    # Filtrage par période
+    if config["période"] != "Les deux" and row[2] != config["période"]:
+        return False
+
+    # Filtrage par parcours patient
+    if config["parcours"] != "Tous types":
+        parcours = config["parcours"]
+        if isinstance(parcours, list):
+            return [row[3], row[4]] == parcours
+        elif parcours == "Zone d'étude uniquement":
+            return (row[3] in [0, 1]) and (row[4] in [0, 1])
+        elif parcours == "Inter-secteur":
+            return (row[3] == 1 or row[4] == 1) and row[3] != 2 and row[4] != 2
+        elif parcours == "Extra-secteur":
+            return row[3] == 2 or row[4] == 2      
+    
+    return True
+
+
+def constructeur_liste_unique(liste_triplets):
+    """
+    Construit une liste unique de codes communes à partir des triplets (patient, prescripteur, officine).
+    Épure les codes (suppression des espaces superflus) et évite les doublons.
+    """
+    liste_communes_uniques = []
+    for triplet in liste_triplets:
+        commune_patient, commune_prescripteur, commune_officine, v = [str(x).strip() for x in triplet]
+        for c in (commune_patient, commune_prescripteur, commune_officine):
+            if c not in liste_communes_uniques:
+                liste_communes_uniques.append(c)
+    return liste_communes_uniques
+
+
+def periode():
+    """
+    Demande à l’utilisateur la période d’étude :
+      - Les deux périodes confondues,
+      - DJF (gardes),
+      - Nuit (urgences).
+    Retourne la valeur sélectionnée sous forme de chaîne.
+    """
+    print("## PERIODE D'ETUDE ##")
+    print("Souhaitez-vous étudier les urgences, les gardes ou les deux ?")
+    choix = demander_choix(" 0 - Les deux \n 1 - Gardes\n 2 - Urgences", ["0", "1", "2"])
+
+    return {
+        "0": "Les deux",
+        "1": "DJF",
+        "2": "Nuit"
+    }[choix]
+
+
+def parcours(Dictionnaire_parcours):
+    """
+    Demande à l’utilisateur quel type de parcours patient analyser :
+    - Tous types
+    - Parcours intra/inter/extra-secteur
+    - Typologies spécifiques (0-0, 0-1, etc.).
+    Retourne la valeur correspondante dans le dictionnaire des parcours.
+    """
+    print("## PARCOURS DU PATIENT ##")
+    choix = demander_choix(
+        " 0 - Tous types\n 1 - 0-0 (Intra-secteur) \n 2 - 0-1 \n 3 - 0-2 \n 4 - 1-0 \n 5 - 1-1 "
+        "\n 6 - 1-2 \n 7 - 2-0 \n 8 - 2-1 \n 9 - 2-2\n 10 - Zone d'étude uniquement\n 11 - Inter-secteur\n 12 - Extra-secteur",
+        [str(i) for i in range(13)]
+    )
+    return Dictionnaire_parcours[choix]
+
+
+def secteur_cible(Config, liste_secteurs_personnels, Dictionnaire_secteurs):
+    """
+    Permet à l’opérateur de sélectionner un secteur précis à analyser ou de choisir tous les secteurs.
+    - Si la configuration contient une liste de secteurs prédéfinie, elle est utilisée.
+    - Sinon, la liste personnalisée passée en paramètre est affichée.
+
+    Retourne l’indice numérique du secteur choisi (0 pour tous les secteurs).
+    """
+    texte = "0 - Tous les secteurs"
+    liste = liste_secteurs_personnels if Config["liste_secteurs"] is None else Config["liste_secteurs"]
+
+    for i in range(len(liste)):
+        texte += f"\n{i + 1} - {Dictionnaire_secteurs[i + 1]}"
+
+    return int(demander_choix(texte, [str(i) for i in range(len(liste) + 1)]))
+
+def Lecture_fichier_Distance_Temps(Config):
+    """
+    Lit le fichier contenant les distances et temps de trajets entre communes.
+    Crée un dictionnaire avec pour clé le couple (Commune_depart, Commune_arrivee)
+    et pour valeur [Distance, Temps, Duree].
+    """
+    Dictionnaire_commune_DT = dict()
+    
+    # Lecture du fichier Excel avec les colonnes et lignes spécifiées dans la configuration
+    distance_temps = pd.read_excel(
+        Config["fichier_distance_temps"],
+        header=0,
+        usecols=Config["colonnes_distance_temps"],
+        nrows=Config["lignes_distance_temps"],
+        dtype={0: str, 1: str}
+    )
+
+    # Parcours du fichier ligne par ligne pour remplir le dictionnaire
+    for row in tqdm(distance_temps.itertuples(index=False),
+                    desc="Lecture fichier distance-temps",
+                    total=Config["lignes_distance_temps"]-1):
+        Commune_depart = row[0]
+        Commune_arrivee = row[1]
+        Distance = row[2]
+        Duree = row[3]  # minutes décimales base 100
+        Temps = row[4]  # format HH:MM:SS
+
+        # Ajout de l'entrée dans le dictionnaire
+        Dictionnaire_commune_DT[(Commune_depart, Commune_arrivee)] = [Distance, Temps, Duree]
+        
+    return Dictionnaire_commune_DT
+
+
+def constructeur_coordonnees(coordonnees_brutes):
+    """
+    Transforme les coordonnées brutes issues d'un fichier GeoJSON ou similaire
+    en une liste de [latitude, longitude] utilisable pour le traçage de polygones.
+    """
+    # Nettoyage des caractères superflus et découpe des coordonnées
+    coordonnees_brutes = coordonnees_brutes[18:-22].replace('[','').replace(']','').replace('"','').split(',')
+
+    x = []  # latitudes
+    y = []  # longitudes
+
+    # Conversion de chaque valeur texte en float
+    for i, valeur in enumerate(coordonnees_brutes):
+        valeur = valeur.strip()
+        if not valeur:
+            continue
+        try:
+            coordonnees = float(valeur)
+            if i % 2 == 0:
+                y.append(coordonnees)  # longitude
+            else:
+                x.append(coordonnees)  # latitude
+        except ValueError:
+            print(f"Could not convert '{valeur}' to float.")
+            continue
+
+    # Construction du polygone final (liste de positions géographiques)
+    polygone_correcte = [[x[i], y[i]] for i in range(len(x))]
+    return polygone_correcte
+
+
+def haversine(point_a, point_b):
+    """
+    Calcule la distance entre deux points géographiques (latitude, longitude)
+    selon la formule de Haversine et retourne la distance en kilomètres.
+    """
+    lat1, lon1 = point_a
+    lat2, lon2 = point_b
+
+    # Conversion des degrés en radians
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+
+    # Différences
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    # Formule Haversine
+    hav = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(hav))
+
+    # Rayon terrestre en km
+    r = 6371
+    return f"{c * r:.2f} km"
+
+
+def constructeur_legende(dictionnaire_couleurs, liste_secteurs):
+    """
+    Crée un code HTML pour afficher la légende des couleurs de secteurs sur la carte.
+    """
+    html = ""
+    for secteur in liste_secteurs:
+        html += f'''<i style="background:{dictionnaire_couleurs[secteur]}; 
+        width:10px; height:10px; display:inline-block; margin-right:5px"></i>{secteur}<br>'''
+    return html
+
+
+def fond_de_carte(Config, liste_secteurs_personnels, dictionnaire_couleurs, DICTIONNAIRE_SECTEURS, DICTIONNAIRE_PARCOURS):
+    """
+    Construit le fond de carte avec :
+    - Les périmètres communaux
+    - Les couleurs des secteurs
+    - Les popups d'informations
+    - La légende
+    Prépare également les flux des patients pour l'analyse.
+    """
+    # Lecture des communes depuis le fichier Excel
+    Donnees_Zone_Etude = pd.read_excel(
+        Config["fichier_communes_zone"],
+        header=0,
+        usecols=Config["colonnes_communes"],
+        nrows=Config["lignes_communes"],
+        dtype={5: str}
+    )
+    
+    fg = folium.FeatureGroup(name="Fond de carte", show=True)
+    dictionnaire_commune_secteurs = defaultdict(str)
+    dictionnaire_centre_secteurs = defaultdict(str)
+    informations_fond = defaultdict(list)
+
+    # Parcours de chaque commune pour construire le fond de carte
+    for row in tqdm(Donnees_Zone_Etude.itertuples(index=False),
+                    desc="Lecture des commmunes",
+                    total=Config["lignes_communes"]-1):
+        lat, long, perimetre, region, departement, code_insee, commune, secteur = row[:8]
+
+        perimetre = constructeur_coordonnees(perimetre)  # Ajustement des coordonnées
+
+        # Mise à jour des dictionnaires de secteurs
+        if secteur != "":
+            dictionnaire_commune_secteurs[code_insee] += secteur
+            if Config["modélisation_flux"] == "Groupé" and commune == secteur:
+                dictionnaire_centre_secteurs[secteur] += code_insee
+
+        # Création de la couleur du secteur si non définie
+        if Config["liste_secteurs"] is None:
+            if secteur not in liste_secteurs_personnels:
+                liste_secteurs_personnels.append(secteur)
+                couleur = LISTE_COULEURS[len(liste_secteurs_personnels) % len(LISTE_COULEURS)]
+                dictionnaire_couleurs[secteur] = couleur
+
+        # Construction du popup HTML
+        style = """
+        <style>
+            .custom-popup table {
+                width: 100%;
+                border-collapse: collapse;
+                font-family: Arial, sans-serif;
+                font-size: 12px;
+            }
+            .custom-popup th {
+                background-color: #f4f4f4;
+                padding: 6px;
+                border: 1px solid #ddd;
+                text-align: left;
+            }
+            .custom-popup td {
+                padding: 6px;
+                border: 1px solid #ddd;
+            }
+        </style>
+        """
+        Donnees_commune = pd.DataFrame(
+            data=[[region, departement, commune, secteur]],
+            columns=["Région", "Département", "Commune", "Secteur"]
+        )
+        html_table = Donnees_commune.to_html(classes="custom-popup", index=False, border=0)
+        popup = folium.Popup(style + html_table, max_width=400)
+
+        informations_fond[code_insee] += [perimetre, secteur, popup]
+
+    if Config["liste_secteurs"] == []:
+        Config["liste_secteurs"] = liste_secteurs_personnels
+
+    fg.add_to(Carte_des_flux)
+
+    # Construction de la légende HTML
+    objets_legende = constructeur_legende(
+        dictionnaire_couleurs,
+        liste_secteurs_personnels if Config["liste_secteurs"] is None else Config["liste_secteurs"]
+    )
+    legende_html = f'''
+        <div style="
+            position: fixed;
+            bottom: 4%;
+            left: 2%;
+            width: auto;
+            height: auto;
+            background-color: white;
+            z-index:9999;
+            font-size: 0.9em;
+            border:2px solid grey;
+            padding: 10px;
+            border-radius:6px;">
+        <b>Secteurs de garde</b><br>
+        {objets_legende}
+        </div>
+        '''
+    Carte_des_flux.get_root().html.add_child(folium.Element(legende_html))
+
+    # Construction des flux
+    LISTE_TRIPLETS_FLUX, CHOIX_SECTEUR = constructeur_flux(
+        Config, liste_secteurs_personnels, DICTIONNAIRE_SECTEURS, DICTIONNAIRE_PARCOURS, dictionnaire_commune_secteurs
+    )
+
+    # Dessin des polygones des communes sur la carte
+    communes_sans_patients = 0
+    for cle, [per, sect, pop] in informations_fond.items():
+        opacity = 0.7 if (CHOIX_SECTEUR == 0 or sect == DICTIONNAIRE_SECTEURS[CHOIX_SECTEUR]) else 0
+        folium.Polygon(
+            locations=per,
+            color='black',
+            weight=1,
+            fill_color=dictionnaire_couleurs[sect],
+            fill_opacity=opacity,
+            fill=True,
+            popup=pop,
+            tooltip=sect
+        ).add_to(fg)
+
+    print(communes_sans_patients,
+          "communes n'ont pas eu de patients ayant consulté dans une pharmacie de la zone d'étude, durant le SGU, sur l'année étudiée")
+    
+    return liste_secteurs_personnels, dictionnaire_centre_secteurs, dictionnaire_commune_secteurs, LISTE_TRIPLETS_FLUX, communes_sans_patients, CHOIX_SECTEUR
+    
+def marqueurs_pharmacies(Config, dictionnaire_couleurs):
+    """
+    Place les pharmacies sur la carte en utilisant Folium.
+    Gère deux modes :
+    - Non groupé : chaque pharmacie a son propre marker.
+    - Groupé : regroupe les markers dans un cluster pour une meilleure lisibilité.
+    """
+    df = pd.read_excel(
+        Config["fichier_phi_dep"],
+        sheet_name=Config["feuille_phie_dep"],
+        header=0,
+        usecols='A:G',
+        nrows=Config["lignes_phie_dep"]
+    )
+
+    if Config["modélisation_pharmacie"] == "Non Groupé":
+        fg = folium.FeatureGroup(name="Pharmacies", show=True)
+    else:
+        marker_cluster = MarkerCluster(name="Pharmacies").add_to(Carte_des_flux)
+
+    for row in df.itertuples(index=False):
+        nom_pharmacie, adresse, commune, code_insee, x, y, secteur = row[:7]
+        if isinstance(x, str):
+            x = float(x.replace(",", "."))
+        if isinstance(y, str):
+            y = float(y.replace(",", "."))
+
+        # Création du popup HTML
+        style = """
+        <style>
+            .custom-popup table {width:100%; border-collapse: collapse; font-family: Arial, sans-serif; font-size:12px;}
+            .custom-popup th {background-color: #f4f4f4; padding: 6px; border: 1px solid #ddd; text-align:left;}
+            .custom-popup td {padding:6px; border:1px solid #ddd;}
+        </style>
+        """
+        Donnees_commune = pd.DataFrame(
+            data=[[nom_pharmacie, secteur, adresse, commune, code_insee]],
+            columns=["Nom", "Secteur", "Adresse", "Commune", "Code commune"]
+        )
+        html_table = Donnees_commune.to_html(classes="custom-popup", index=False, border=0)
+        popup = folium.Popup(style + html_table, max_width=500)
+
+        # Placement du marker selon le mode choisi
+        if Config["modélisation_pharmacie"] == "Non Groupé":
+            folium.Marker(
+                location=[y, x],
+                tooltip=nom_pharmacie,
+                popup=popup,
+                icon=folium.Icon(color=dictionnaire_couleurs[secteur], icon='staff-snake', prefix='fa')
+            ).add_to(fg)
+        else:
+            folium.Marker(
+                location=[y, x],
+                popup=popup,
+                name=nom_pharmacie,
+                overlay=True,
+                control=True,
+                icon=folium.Icon(color=dictionnaire_couleurs[secteur], icon='staff-snake', prefix='fa')
+            ).add_to(marker_cluster)
+
+    if Config["modélisation_pharmacie"] == "Non Groupé":
+        fg.add_to(Carte_des_flux)
+
+
+def constructeur_flux(Config, liste_secteurs_personnels, Dictionnaire_secteurs, Dictionnaire_parcours, Dico_com_sect):
+    """
+    Lit le fichier des flux de patients et construit une liste de triplets
+    (commune_patient, commune_prescripteur, commune_officine) avec le volume associé.
+    Permet de filtrer par secteur choisi et autres critères définis par l'opérateur.
+    """
+    LISTE_TRIPLETS_FLUX = []
+
+    # Sélection du secteur à observer
+    print("Souhaitez-vous observer un secteur en particulier ?")
+    choix_secteur = secteur_cible(Config, liste_secteurs_personnels, Dictionnaire_secteurs)
+
+    # Lecture du fichier Excel des flux
+    Donnees_Flux = pd.read_excel(
+        Config["fichier_flux"],
+        sheet_name=Config["feuille_étudiée"],
+        header=0,
+        usecols=Config["colonnes_flux"],
+        nrows=Config["lignes_flux"],
+        dtype={5: str, 6: str, 7: str}
+    )
+
+    for row in tqdm(Donnees_Flux.itertuples(index=False), desc="", total=Config["lignes_flux"]-1):
+        if not filtre_ligne(row, Config, choix_secteur, Dictionnaire_secteurs, Dictionnaire_parcours, Dico_com_sect):
+            continue  # Ignore les lignes ne correspondant pas aux critères
+
+        # Extraction des informations de parcours
+        commune_patient = row[5]
+        commune_prescripteur = row[6]
+        commune_officine = row[7]
+        Volume = row[8]
+
+        LISTE_TRIPLETS_FLUX.append([commune_patient, commune_prescripteur, commune_officine, Volume])
+
+    return LISTE_TRIPLETS_FLUX, choix_secteur
+
+
+def Constructeur_donnees_françaises(liste_communes_uniques, fichier_communes_France, nombre_communes):
+    """
+    Lit le fichier des communes françaises et retourne les informations
+    uniquement pour les communes présentes dans liste_communes_uniques.
+    """
+    Donnees_comm_uniques = []
+
+    Donnees_Communes_France = pd.read_excel(
+        fichier_communes_France,
+        header=0,
+        usecols='A:F',
+        nrows=nombre_communes,
+        dtype={4: str}
+    )
+
+    for row in tqdm(Donnees_Communes_France.itertuples(index=False),
+                    desc="Communes de France",
+                    total=nombre_communes-1):
+        code_commune = str(row[4])
+        if code_commune in liste_communes_uniques:
+            latitude = row[0]
+            longitude = row[1]
+            region = row[2]
+            departement = row[3]
+            commune = row[5]
+            Donnees_comm_uniques.append([code_commune, latitude, longitude, region, departement, commune])
+
+    return Donnees_comm_uniques
+
+
+def calcul_temps_trajet(ensemble_cle_dictionnaire_déplacements, trajets, nombre_patients_trajets, nom, dictionnaire_distance_temps, trajets_supprimés, patients_supprimés):
+    """
+    Calcule la durée moyenne des trajets pour un ensemble de trajets et un nombre de patients.
+    Renvoie un dictionnaire avec les distances et temps formatés et un dictionnaire du temps moyen.
+    """
+    Dictionnaire_distance_temps = {}
+    Dictionnaire_temps_moyen = defaultdict()
+    total_duree = 0
+    total_patients = 0
+
+    for (commune_depart, commune_arrivee) in trajets:
+        if (commune_depart, commune_arrivee) in ensemble_cle_dictionnaire_déplacements:
+            distance, temps, duree = dictionnaire_distance_temps[(commune_depart, commune_arrivee)]
+            distance_str = f"{distance:.1f} km"
+            temps_str = temps.strftime("%Hh %Mmin %Ss")
+            Dictionnaire_distance_temps[(commune_depart, commune_arrivee)] = [distance_str, temps_str]
+
+            patients = nombre_patients_trajets[(commune_depart, commune_arrivee)]
+            total_duree += duree * patients
+            total_patients += patients
+
+    total_patients += patients_supprimés
+    Dictionnaire_temps_moyen[nom] = f"{(total_duree / total_patients):.0f}"
+
+    if total_patients > 0:
+        heures = int((total_duree / total_patients) / 60)
+        minutes = int((total_duree / total_patients) % 60)
+        print(f"Les trajets {nom} sont en moyenne de {heures}h {minutes}min")
+    else:
+        print(f"Aucun patient pour les trajets {nom}")
+
+    return Dictionnaire_distance_temps, Dictionnaire_temps_moyen
+
+
+def centralisation_flux(dictionnaire_trajets, dictionnaire_commune_secteurs, dictionnaire_centre_secteurs):
+    """
+    Centralise les flux de patients sur le centre des secteurs pour faciliter la visualisation.
+    - Fusionne les trajets intra-secteurs.
+    - Remplace les communes par le code du centre du secteur.
+    """
+    dictionnaire_trajets_2 = defaultdict(int)
+    trajets_intra_secteur = 0
+    volume_intra_secteur = 0
+
+    for (commune_depart, commune_arrivee), volume in dictionnaire_trajets.items():
+        secteur_depart = dictionnaire_commune_secteurs[commune_depart]
+        code_centre_secteur_depart = dictionnaire_centre_secteurs[secteur_depart] if secteur_depart != "" else commune_depart
+
+        secteur_arrivee = dictionnaire_commune_secteurs[commune_arrivee]
+        code_centre_secteur_arrivee = dictionnaire_centre_secteurs[secteur_arrivee] if secteur_arrivee != "" else commune_arrivee
+
+        if code_centre_secteur_depart == code_centre_secteur_arrivee:
+            trajets_intra_secteur += 1
+            volume_intra_secteur += volume
+        else:
+            dictionnaire_trajets_2[(code_centre_secteur_depart, code_centre_secteur_arrivee)] += volume
+
+    return dictionnaire_trajets_2
+def polyline_courbe(depart, arrivee, couleur, nombre_points=50):
+    """
+    Crée une polyline courbée (quadratique de Bézier) entre le point de départ et d'arrivée.
+    Utilisée pour tracer les flux sur la carte avec un effet visuel de courbe.
+    
+    Args:
+        depart (tuple): coordonnées (lat, lon) du départ
+        arrivee (tuple): coordonnées (lat, lon) de l'arrivée
+        couleur (str): couleur de la ligne pour déterminer la courbure
+        nombre_points (int): nombre de points intermédiaires pour lisser la courbe
+
+    Returns:
+        list: liste de points (lat, lon) formant la polyline
+    """
+    dictionnaire_courbure = {"blue": 0.2, "red": 0.25, "darkgreen": 0.3}
+    courbure = dictionnaire_courbure[couleur]
+
+    (lat1, lon1) = depart
+    (lat2, lon2) = arrivee
+
+    lat_moy = radians((lat1 + lat2) / 2.0)  # Projection équirectangulaire simple
+
+    def mise_en_forme_xy(lat, lon):
+        x = lon * cos(lat_moy)
+        y = lat
+        return (x, y)
+
+    def mise_en_forme_latlon(x, y):
+        lon = x / cos(lat_moy)
+        lat = y
+        return (lat, lon)
+
+    x1, y1 = mise_en_forme_xy(lat1, lon1)
+    x2, y2 = mise_en_forme_xy(lat2, lon2)
+
+    dx, dy = x2 - x1, y2 - y1
+    taille_seg = hypot(dx, dy)
+
+    # Vecteur perpendiculaire normalisé
+    px, py = -dy / taille_seg, dx / taille_seg
+
+    # Point de contrôle pour la courbe
+    mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    cx, cy = mx + px * taille_seg * courbure, my + py * taille_seg * courbure
+
+    # Calcul des points de la courbe
+    points = []
+    for i in range(nombre_points + 1):
+        t = i / nombre_points
+        # Échantillonnage Bézier quadratique B(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2
+        bx = (1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t ** 2 * x2
+        by = (1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t ** 2 * y2
+        points.append(mise_en_forme_latlon(bx, by))
+
+    return points
+
+
+def constructeur_trajet_patient(dictionnaire_trajets, ensemble_cle_dictionnaire_déplacements, nom, dictionnaire_communes,
+                                couleur, dictionnaire_distance_temps, Config, trajets_supprimés, patients_supprimés, valeurs):
+    """
+    Traite les trajets des patients pour construire les lignes sur la carte et calculer le temps moyen.
+    Appelle la fonction de placement des trajets.
+    """
+    dictionnaire_distance_temps_format, dictionnaire_temps_moyen = calcul_temps_trajet(
+        ensemble_cle_dictionnaire_déplacements,
+        dictionnaire_trajets.keys(),
+        dictionnaire_trajets,
+        nom,
+        dictionnaire_distance_temps,
+        trajets_supprimés,
+        patients_supprimés
+    )
+
+    maximum = nlargest(1, dictionnaire_trajets.items(), key=lambda kv: kv[1])[0][1]
+
+    placeur_de_trajet(dictionnaire_trajets, dictionnaire_communes, dictionnaire_distance_temps_format, maximum, couleur, valeurs)
+
+    return dictionnaire_temps_moyen
+
+
+def placeur_de_trajet(dictionnaire_trajets, dictionnaire_communes, dictionnaire_distance_temps_format, maximum, couleur, valeurs):
+    """
+    Place les trajets sur la carte Folium avec épaisseur et couleur proportionnelles au volume.
+    Affiche un tooltip avec la distance et le temps du trajet.
+    """
+    dictionnaire_couleur_trajet = {
+        "darkgreen": ["#004000", "#00ff00"],
+        "red": ["#800000", "#ff0000"],
+        "blue": ["#000080", "#00bfff"]
+    }
+
+    fg = folium.FeatureGroup(name=f"Trajets {nom}", show=False)
+    for (commune_depart, commune_arrivee), volume in tqdm(dictionnaire_trajets.items(), desc=f"Trajets {nom}"):
+        if volume < 2:
+            continue
+
+        trajet = [
+            [dictionnaire_communes[commune_depart][1], dictionnaire_communes[commune_depart][2]],
+            [dictionnaire_communes[commune_arrivee][1], dictionnaire_communes[commune_arrivee][2]]
+        ]
+
+        try:
+            tooltip = f'''<h6>Distance : {dictionnaire_distance_temps_format[(commune_depart, commune_arrivee)][0]}</h6>
+                          <h6>Temps : {dictionnaire_distance_temps_format[(commune_depart, commune_arrivee)][1]}</h6>'''
+
+        except KeyError:
+            tooltip = f'''Distance : {haversine(trajet[0], trajet[1])} (à vol d'oiseau)'''
+
+#        print(tooltip)
+        folium.ColorLine(
+            positions=polyline_courbe(trajet[0], trajet[1], couleur),
+            colors=valeurs,
+            colormap=dictionnaire_couleur_trajet[couleur],
+            tooltip=tooltip,
+            weight=log10(volume) * sqrt(volume / maximum) * 3
+        ).add_to(fg)
+
+    fg.add_to(Carte_des_flux)
+
+
+def unicite_trajet(triplet_depart, triplet_arrivee, nombre_patients, dictionnaire_par_defaut):
+    """
+    Ajoute ou incrémente le nombre de patients pour un trajet dans le dictionnaire.
+    """
+    trajet = (triplet_depart, triplet_arrivee)
+    dictionnaire_par_defaut[trajet] += nombre_patients
+    return dictionnaire_par_defaut
+
+
+def trajets_uniques(liste_triplets):
+    """
+    Agrège les trajets uniques pour patient-prescripteur, prescripteur-officine et patient-officine.
+    Élimine les trajets intra-communaux et cumule les volumes.
+    """
+    compteur_1, compteur_2, compteur_3 = 0, 0, 0
+    nombre_patients_1, nombre_patients_2, nombre_patients_3 = 0, 0, 0
+
+    compteur_trajet = {
+        "patient-prescripteur": defaultdict(int),
+        "prescripteur-officine": defaultdict(int),
+        "patient-officine": defaultdict(int)
+    }
+
+    for triplet in tqdm(liste_triplets, desc="Analyse parcours uniques"):
+        if triplet[0] != triplet[1]:
+            compteur_trajet["patient-prescripteur"] = unicite_trajet(triplet[0], triplet[1], triplet[3], compteur_trajet["patient-prescripteur"])
+        else:
+            compteur_1 += 1
+            nombre_patients_1 += triplet[3]
+
+        if triplet[1] != triplet[2]:
+            compteur_trajet["prescripteur-officine"] = unicite_trajet(triplet[1], triplet[2], triplet[3], compteur_trajet["prescripteur-officine"])
+        else:
+            compteur_2 += 1
+            nombre_patients_2 += triplet[3]
+
+        if triplet[0] != triplet[2]:
+            compteur_trajet["patient-officine"] = unicite_trajet(triplet[0], triplet[2], triplet[3], compteur_trajet["patient-officine"])
+        else:
+            compteur_3 += 1
+            nombre_patients_3 += triplet[3]
+
+    Dictionnaire_des_trajets_uniques = {
+        "le patient et le prescripteur": [compteur_trajet["patient-prescripteur"], compteur_1, nombre_patients_1],
+        "le prescripteur et l'officine": [compteur_trajet["prescripteur-officine"], compteur_2, nombre_patients_2],
+        "le patient et l'officine": [compteur_trajet["patient-officine"], compteur_3, nombre_patients_3]
+    }
+
+    return Dictionnaire_des_trajets_uniques
+
+
+def constructeur_heatmap_cercle(liste_triplets, dictionnaire_communes):
+    """
+    Construit une heatmap et des cercles proportionnels aux volumes de patients, prescripteurs et officines.
+    """
+    compteurs = {
+        "patients": defaultdict(int),
+        "prescripteurs": defaultdict(int),
+        "officines": defaultdict(int)
+    }
+
+    for commune_patient, commune_prescripteur, commune_officine, volume in tqdm(liste_triplets, desc="Calcul des densités ponctuelles", total=len(liste_triplets)):
+        compteurs["patients"][commune_patient] += volume
+        compteurs["prescripteurs"][commune_prescripteur] += volume
+        compteurs["officines"][commune_officine] += volume
+
+    cercle(compteurs, dictionnaire_communes)
+    heatmap(compteurs, dictionnaire_communes)
+
+
+def heatmap(compteurs, dictionnaire_communes):
+    """
+    Génère une heatmap Folium pour patients, prescripteurs et officines.
+    """
+    dictionnaire_radius = {"patients": 12, "prescripteurs": 15, "officines": 5}  # rayon des points heatmap
+
+    for type_dict in compteurs.keys():
+        data = []
+        fg = folium.FeatureGroup(name=f"HeatMap {type_dict}", show=False)
+        for cle, valeur in tqdm(compteurs[type_dict].items(), desc=f"Pose des gradients {type_dict}"):
+            data.append([dictionnaire_communes[cle][1], dictionnaire_communes[cle][2], valeur])
+        HeatMap(data, radius=dictionnaire_radius[type_dict]).add_to(fg)
+        fg.add_to(Carte_des_flux)
+
+
+def cercle(compteurs, dictionnaire_communes):
+    """
+    Place des cercles sur la carte, taille proportionnelle au volume et couleur selon type.
+    """
+    dictionnaire_couleurs = {"patients": 'blue', "prescripteurs": 'red', "officines": 'lightgreen'}
+
+    for type_dict in compteurs.keys():
+        fg = folium.FeatureGroup(name=f"Cercles {type_dict}", show=False)
+        for cle, valeur in tqdm(compteurs[type_dict].items(), desc=f"Pose des points {type_dict}"):
+            radius = sqrt(valeur) / 8
+            folium.CircleMarker(
+                location=[dictionnaire_communes[cle][1], dictionnaire_communes[cle][2]],
+                radius=radius,
+                color=dictionnaire_couleurs[type_dict],
+                fill=True,
+                fill_opacity=1,
+                opacity=1,
+                tooltip=type_dict,
+                stroke=False,
+                popup=valeur if valeur > 11 else "N/A"
+            ).add_to(fg)
+        fg.add_to(Carte_des_flux)
+
+
+def Recherche_donnees_communes_manquantes(liste_triplets, ensemble_communes_manquantes):
+    """
+    Filtre les triplets contenant des communes manquantes dans le fichier des communes de France.
+    Renvoie les triplets valides et compte le nombre de parcours et de patients exclus.
+    """
+    nombre_parcours_supprimes = 0
+    nombre_patients_ecartes = 0
+    triplets_valides = []
+
+    for triplet in liste_triplets:
+        commune_patient, commune_prescripteur, commune_officine, volume = triplet
+        if commune_patient in ensemble_communes_manquantes or commune_prescripteur in ensemble_communes_manquantes or commune_officine in ensemble_communes_manquantes:
+            nombre_parcours_supprimes += 1
+            nombre_patients_ecartes += volume
+        else:
+            triplets_valides.append(triplet)
+
+    return triplets_valides, nombre_parcours_supprimes, nombre_patients_ecartes
+
+
+###### Compteur du nombre de tentative réalisées avec le programme, permet une évolution du nom des cartes au fil des tentatives
+Config = None  # Initialement aucune configuration n'est chargée
+
+# Initialisation des variables nécessaires à l'initialisation des données
+DICTIONNAIRE_PARCOURS = {     
+    "0": "Tous types",
+    "1": [0, 0],
+    "2": [0, 1],
+    "3": [0, 2],
+    "4": [1, 0],
+    "5": [1, 1],
+    "6": [1, 2],
+    "7": [2, 0],
+    "8": [2, 1],
+    "9": [2, 2],
+    "10": "Zone d'étude uniquement",
+    "11": "Inter-secteur",
+    "12": "Extra-secteur"
+}
+
+Etat = "Marche"  # Condition pour la boucle principale : tant qu'on ne veut pas arrêter
+
+# Boucle principale : permet de relancer l'analyse autant de fois que nécessaire
+while Etat != "Arrêt":
+    n += 1
+    start = time.time()  # Mesure du temps d'exécution de chaque itération
+
+    LISTE_SECTEURS = None  # Liste des secteurs personnalisée par l'utilisateur
+
+    # Initialisation des paramètres si Config n'a pas été définie
+    if Config is None:
+        Config = Initialisation(DICTIONNAIRE_PARCOURS)
+    else:
+        # Permet de modifier les paramètres si souhaité
+        changement = input('''Si vous n'avez pas de modification à faire, entrez "stop".''')
+        clear_output()
+        while changement != "stop":
+            # Affiche les paramètres que l'utilisateur peut modifier
+            for i, (clé, objet) in enumerate(Config.items()):
+                if i < 3 or (i in [6, 7]) or (i in [9, 10]) or i == 13 or i >= 15:
+                    print(i, clé, ":", objet)
+
+            modification = demander_choix("Quel paramètre souhaiteriez-vous modifier ?", [str(i) for i in range(len(Config))])
+            Config = choix_config(modification, DICTIONNAIRE_PARCOURS)
+            changement = input('''Si vous n'avez plus de modification à faire, entrez "stop".''')
+
+    # Initialisation des variables pour le fond de carte
+    LISTE_SECTEURS_PERSONNELS = []
+    LISTE_COULEURS = [
+        'gray', 'purple', 'darkred', 'blue', 'lightgreen', 'red', 'lightblue', 'darkblue',
+        'orange', 'green', 'darkgreen', 'black', 'pink', 'lightgray', 'cadetblue', 'beige'
+    ]
+    DICTIONNAIRE_COULEURS = {}
+
+    # Création du dictionnaire des couleurs si des secteurs sont déjà définis
+    if Config["liste_secteurs"] is not None:
+        DICTIONNAIRE_COULEURS = {
+            SECTEUR: LISTE_COULEURS[i % (len(LISTE_COULEURS))]
+            for i, SECTEUR in enumerate(Config["liste_secteurs"])
+        }
+
+    # Création de la carte principale avec Folium
+    Carte_des_flux = folium.Map(
+        location=Config["localisation"],
+        zoom_start=Config["zoom"],
+        world_copy_jump=True,
+        control_scale=True,
+        tiles="cartodb positron"
+    )
+
+    # Dictionnaire permettant de relier les numéros aux secteurs
+    DICTIONNAIRE_SECTEURS = {i+1: Config["liste_secteurs"][i] for i in range(len(Config["liste_secteurs"]))}
+
+    # Construction du fond de carte : périmètres communaux, couleurs par secteur et popups
+    LISTE_SECTEURS_PERSONNELS, DICTIONNAIRE_CENTRE_SECTEURS, DICTIONNAIRE_COMMUNES_SECTEUR, \
+    LISTE_TRIPLETS_FLUX, COMMUNES_SANS_PATIENTS, CHOIX_SECTEUR = fond_de_carte(
+        Config,
+        LISTE_SECTEURS_PERSONNELS,
+        DICTIONNAIRE_COULEURS,
+        DICTIONNAIRE_SECTEURS,
+        DICTIONNAIRE_PARCOURS
+    )
+
+    # Placement des pharmacies sur la carte
+    marqueurs_pharmacies(Config, DICTIONNAIRE_COULEURS)
+
+    # ===================== Création des liens représentant les parcours =====================
+
+    # Fichier de référence pour les communes françaises
+    FICHIER_COMMUNES_FRANCE = "Communes de france.xlsx"
+    NOMBRE_COMMUNES = 34934
+
+    print(f"{len(LISTE_TRIPLETS_FLUX)} des {Config['lignes_flux']-1} parcours ont été conservés après filtrage.")
+
+    # Liste des communes uniques à partir des triplets de parcours
+    LISTE_COMMUNES_UNIQUES = constructeur_liste_unique(LISTE_TRIPLETS_FLUX)
+
+    # Lecture des données géographiques des communes uniques
+    DONNEES_COMMUNES_UNIQUES = Constructeur_donnees_françaises(
+        LISTE_COMMUNES_UNIQUES,
+        FICHIER_COMMUNES_FRANCE,
+        NOMBRE_COMMUNES
+    )
+
+    print("L'ensemble des communes uniques, sans doublon, contient", len(set(LISTE_COMMUNES_UNIQUES)), "communes uniques")
+    print("Il y a", len(LISTE_COMMUNES_UNIQUES), "communes uniques dans notre échantillon.")
+    print("Le programme a trouvé", len(DONNEES_COMMUNES_UNIQUES), "dans le fichier des communes de France.")
+
+    # Création de l'ensemble des codes de communes trouvées
+    LISTE_CODE_COMMUNES_UNIQUES = [code[0] for code in DONNEES_COMMUNES_UNIQUES]
+    ENSEMBLE_COMMUNES = set(LISTE_COMMUNES_UNIQUES)
+    ENSEMBLE_CODES = set(LISTE_CODE_COMMUNES_UNIQUES)
+    ENSEMBLE_COMMUNES_MANQUANTES = ENSEMBLE_COMMUNES - ENSEMBLE_CODES  # communes manquantes
+
+    # Suppression des triplets contenant des communes manquantes
+    LISTE_TRIPLETS_FLUX, NOMBRE_PARCOURS_SUPPRIMES, NOMBRE_PATIENTS_ECARTES = Recherche_donnees_communes_manquantes(
+        LISTE_TRIPLETS_FLUX,
+        ENSEMBLE_COMMUNES_MANQUANTES
+    )
+
+    # Logs pour suivi
+    print(f"{len(ENSEMBLE_COMMUNES_MANQUANTES)} communes manquantes :")
+    print(ENSEMBLE_COMMUNES_MANQUANTES)
+    print(f"Nombre de parcours supprimés : {NOMBRE_PARCOURS_SUPPRIMES}, soit {NOMBRE_PATIENTS_ECARTES} patients.")
+
+    # Dictionnaire associant chaque code commune aux données correspondantes
+    DICTIONNAIRE_COMMUNES = dict(zip(LISTE_CODE_COMMUNES_UNIQUES, DONNEES_COMMUNES_UNIQUES))
+
+    # Regroupement des trajets uniques et suppression des doublons / trajets intra-communaux
+    DICTIONNAIRE_DES_TRAJETS_UNIQUES = trajets_uniques(LISTE_TRIPLETS_FLUX)
+
+    LISTE_NOMBRE_TRAJETS_UNIQUES = []
+    for item in DICTIONNAIRE_DES_TRAJETS_UNIQUES.keys():
+        print(
+            f"Il y a donc {len(DICTIONNAIRE_DES_TRAJETS_UNIQUES[item][0])} trajets uniques entre {item}, "
+            f"{DICTIONNAIRE_DES_TRAJETS_UNIQUES[item][1]} trajets intra-communaux ont été supprimés, "
+            f"soit {DICTIONNAIRE_DES_TRAJETS_UNIQUES[item][2]} patients écartés"
+        )
+        LISTE_NOMBRE_TRAJETS_UNIQUES.append(len(DICTIONNAIRE_DES_TRAJETS_UNIQUES[item][0]))
+
+    # Lecture du fichier distances / temps
+    DICTIONNAIRE_COMMUNES_DISTANCE_TEMPS = Lecture_fichier_Distance_Temps(Config)
+
+    COULEURS_TRAJETS = {
+        "le patient et le prescripteur": "blue",
+        "le prescripteur et l'officine": "red",
+        "le patient et l'officine": "darkgreen"
+    }
+
+    ENSEMBLE_CLES_DICTIONNAIRE_DEPLACEMENT = set(DICTIONNAIRE_COMMUNES_DISTANCE_TEMPS.keys())
+    LISTE_TEMPS_MOYEN = []
+
+    VALEURS_COLORMAP = linspace(0, 50, 51)
+
+    # Préparation intermédiaire pour les trajets et couleurs
+    DICTIONNAIRE_INTERMEDIAIRE = {}
+    for description, (dictionnaire_par_defaut, trajets_supprimés, patients_supprimés) in DICTIONNAIRE_DES_TRAJETS_UNIQUES.items():
+        cle = description.replace("le ", "").replace("l'", "").replace(" et ", "-")
+        couleur = COULEURS_TRAJETS[description]
+        DICTIONNAIRE_INTERMEDIAIRE[cle] = [dictionnaire_par_defaut, couleur, trajets_supprimés, patients_supprimés]
+
+    # Centralisation des flux si modélisation groupée
+    if Config["modélisation_flux"] == "Groupé":
+        DICTIONNAIRE_TRAJETS_2 = defaultdict(list)
+        for nom, (dictionnaire_trajets, couleur, trajets_supprimés, patients_supprimés) in DICTIONNAIRE_INTERMEDIAIRE.items():  
+            DICTIONNAIRE_TRAJETS_2[nom] += [
+                centralisation_flux(dictionnaire_trajets, DICTIONNAIRE_COMMUNES_SECTEUR, DICTIONNAIRE_CENTRE_SECTEURS),
+                couleur,
+                trajets_supprimés,
+                patients_supprimés
+            ]
+
+        for nom, (dictionnaire_trajets, couleur, trajets_supprimés, patients_supprimés) in DICTIONNAIRE_TRAJETS_2.items():
+            LISTE_TEMPS_MOYEN.append(
+                constructeur_trajet_patient(
+                    dictionnaire_trajets,
+                    ENSEMBLE_CLES_DICTIONNAIRE_DEPLACEMENT,
+                    nom,
+                    DICTIONNAIRE_COMMUNES,
+                    couleur,
+                    DICTIONNAIRE_COMMUNES_DISTANCE_TEMPS,
+                    Config,
+                    trajets_supprimés,
+                    patients_supprimés,
+                    VALEURS_COLORMAP
+                )
+            )
+    else:
+        # Si non groupé, on place directement tous les trajets
+        for nom, (dictionnaire_trajets, couleur, trajets_supprimés, patients_supprimés) in DICTIONNAIRE_INTERMEDIAIRE.items():
+            LISTE_TEMPS_MOYEN.append(
+                constructeur_trajet_patient(
+                    dictionnaire_trajets,
+                    ENSEMBLE_CLES_DICTIONNAIRE_DEPLACEMENT,
+                    nom,
+                    DICTIONNAIRE_COMMUNES,
+                    couleur,
+                    DICTIONNAIRE_COMMUNES_DISTANCE_TEMPS,
+                    Config,
+                    trajets_supprimés,
+                    patients_supprimés,
+                    VALEURS_COLORMAP
+                )
+            )
+
+    # Nom final du fichier carte HTML
+    Nom_fichier_carte = f"{n} - {Config['feuille_étudiée']} - {Config['période']} - {Config['parcours']} - {CHOIX_SECTEUR}.html"
+
+    # Placement des cercles et heatmaps
+    constructeur_heatmap_cercle(LISTE_TRIPLETS_FLUX, DICTIONNAIRE_COMMUNES)
+    folium.LayerControl(collapsed=False).add_to(Carte_des_flux)
+
+    # Sauvegarde et ouverture de la carte finale
+    Carte_des_flux.save(Nom_fichier_carte)
+    webbrowser.open(Nom_fichier_carte)
+
+    end = time.time()
+    print(f"Le programme a prit {(end-start):.2f} secondes à s'exécuter, soit moins de {((end-start)/60):.0f} minutes")
+
+    # ==================== Création des logs ====================
+    Liste_logs = []
+
+    Liste_logs.append(COMMUNES_SANS_PATIENTS)
+    Liste_logs.append(len(LISTE_TRIPLETS_FLUX))
+    for volume in LISTE_NOMBRE_TRAJETS_UNIQUES:
+        Liste_logs.append(volume)
+    for dictionnaire in LISTE_TEMPS_MOYEN:
+        for temps in dictionnaire.values():
+            Liste_logs.append(temps)
+    Liste_logs.append(f"{(end-start):.2f}")
+    print(Liste_logs)
+
+    df1 = pd.DataFrame(
+        [Liste_logs],
+        index=[Nom_fichier_carte],
+        columns=[
+            "Commune sans patients",
+            "Traj conservés",
+            "Traj pa-pr",
+            "Traj pr-of",
+            "Traj pa-of",
+            "Tps moy pa-pr (min)",
+            "Tps moy pr-of (min)",
+            "Tps moy pa-of (min)",
+            "Tps d'exécution (s)"
+        ]
+    )
+
+    # Sauvegarde des logs dans un fichier Excel
+    fichier = "logs.xlsx"
+    if os.path.exists(fichier):
+        df_exist = pd.read_excel(fichier, index_col=0)
+        df_total = pd.concat([df_exist, df1])
+    else:
+        df_total = df1
+
+    df_total.to_excel(fichier)
+
+    # Demande à l'utilisateur s'il veut arrêter la session
+    #Etat = input('Voulez-vous arrêter la session ? Si oui, entrez "Arrêt"')
+    Etat="Arrêt"
