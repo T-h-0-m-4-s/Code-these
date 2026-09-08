@@ -15,7 +15,7 @@ import folium                               # Génération de cartes interactive
 from folium.plugins import HeatMap, MarkerCluster  # Plugins pour cartes avancées (cluster, heatmap)
 
 # Outils de progression, temps et interface utilisateur
-from tqdm.notebook import tqdm              # Barre de progression dans Jupyter Notebook
+from tqdm import tqdm              # Barre de progression dans Jupyter Notebook
 import time                                 # Mesure du temps d’exécution
 from datetime import time as dt_time        # Gestion d’objets "time"
 from IPython.display import clear_output    # Nettoyage de la sortie notebook
@@ -976,21 +976,41 @@ def placeur_de_trajet(dictionnaire_trajets, dictionnaire_communes, dictionnaire_
     }
 
     fg = folium.FeatureGroup(name=f"Trajets {nom}", show=False)
+    
     for (commune_depart, commune_arrivee), volume in tqdm(dictionnaire_trajets.items(), desc=f"Trajets {nom}"):
         if volume < 2:
             continue
 
+        # 1. Récupération sécurisée des données de communes
+        commune_dep_data = dictionnaire_communes.get(commune_depart)
+        commune_arr_data = dictionnaire_communes.get(commune_arrivee)
+        
+        # Si une commune est introuvable, on ignore pour éviter un plantage
+        if not commune_dep_data or not commune_arr_data:
+            continue
+
+        # Extraction exacte des coordonnées (Index 1 pour Lat, Index 2 pour Lon)
         trajet = [
-            [dictionnaire_communes[commune_depart][1], dictionnaire_communes[commune_depart][2]],
-            [dictionnaire_communes[commune_arrivee][1], dictionnaire_communes[commune_arrivee][2]]
+            [commune_dep_data[1], commune_dep_data[2]],
+            [commune_arr_data[1], commune_arr_data[2]]
         ]
 
+        # 2. Gestion de la clé manquante pour le couple de communes (ex: '38544', '69088')
         try:
-            tooltip = f'''<h6>Distance : {dictionnaire_distance_temps_format[(commune_depart, commune_arrivee)][0]}</h6>
-                          <h6>Temps : {dictionnaire_distance_temps_format[(commune_depart, commune_arrivee)][1]}</h6>'''
+            infos_trajet = dictionnaire_distance_temps_format[(commune_depart, commune_arrivee)]
+            tooltip = f'''<h6>Distance : {infos_trajet[0]}</h6>
+                          <h6>Temps : {infos_trajet[1]}</h6>'''
 
         except KeyError:
-            tooltip = f'''Distance : {haversine(trajet[0], trajet[1])} (à vol d'oiseau)'''
+            # Calcul de secours à vol d'oiseau
+            distance_vol_oiseau = haversine(trajet[0], trajet[1])
+            
+            # Sécurité si haversine renvoie déjà un texte (ex: "15 km") au lieu d'un nombre
+            if isinstance(distance_vol_oiseau, float) or isinstance(distance_vol_oiseau, int):
+                distance_vol_oiseau = f"{round(distance_vol_oiseau, 1)} km"
+                
+            tooltip = f'''<h6>Distance : {distance_vol_oiseau} (à vol d'oiseau)</h6>
+                          <h6>Temps : Donnée indisponible</h6>'''
 
 #        print(tooltip)
         folium.ColorLine(
@@ -1392,5 +1412,4 @@ while Etat != "Arrêt":
     df_total.to_excel(fichier)
 
     # Demande à l'utilisateur s'il veut arrêter la session
-    #Etat = input('Voulez-vous arrêter la session ? Si oui, entrez "Arrêt"')
-    Etat="Arrêt"
+    Etat = input('Voulez-vous arrêter la session ? Si oui, entrez "Arrêt"')
